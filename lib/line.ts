@@ -8,14 +8,14 @@ const LINE_API_BASE = "https://api.line.me/v2/bot/message";
  */
 export async function pushMessage(
   text: string,
-  userId?: string
+  userId?: string,
 ): Promise<void> {
   const to = userId ?? process.env.LINE_TARGET_USER_ID;
   const token = process.env.LINE_CHANNEL_ACCESS_TOKEN;
 
   if (!to || !token) {
     throw new Error(
-      "Missing LINE_TARGET_USER_ID or LINE_CHANNEL_ACCESS_TOKEN env variables"
+      "Missing LINE_TARGET_USER_ID or LINE_CHANNEL_ACCESS_TOKEN env variables",
     );
   }
 
@@ -42,7 +42,7 @@ export async function pushMessage(
  */
 export async function replyMessage(
   replyToken: string,
-  text: string
+  text: string,
 ): Promise<void> {
   const token = process.env.LINE_CHANNEL_ACCESS_TOKEN;
 

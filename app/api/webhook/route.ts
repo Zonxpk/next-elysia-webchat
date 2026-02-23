@@ -66,7 +66,7 @@ export async function POST(request: NextRequest) {
         ? `LINE User (${event.source.userId.slice(0, 8)}…)`
         : "LINE User";
 
-      addMessage({ text, from: "line", senderName });
+      await addMessage({ text, from: "line", senderName });
 
       console.log(`[webhook] Message from LINE: "${text}"`);
     }
