@@ -35,9 +35,7 @@ export async function getRedisClient(): Promise<RedisClient> {
  */
 export async function createSubscriber(): Promise<RedisClient> {
   const client = createClient({ url: getRedisUrl() });
-  client.on("error", (err) =>
-    console.error("[Redis subscriber error]", err),
-  );
+  client.on("error", (err) => console.error("[Redis subscriber error]", err));
   await client.connect();
   return client;
 }

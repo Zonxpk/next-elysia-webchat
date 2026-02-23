@@ -4,11 +4,7 @@
  * This works correctly across multiple Vercel serverless instances.
  */
 
-import {
-  getRedisClient,
-  REDIS_CHANNEL,
-  REDIS_KEY,
-} from "@/lib/redis";
+import { getRedisClient, REDIS_CHANNEL, REDIS_KEY } from "@/lib/redis";
 
 export interface Message {
   id: string;
