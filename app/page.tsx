@@ -1,13 +1,10 @@
 ﻿"use client";
 
 import { useEffect, useRef, useState, useCallback } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Message } from "@/lib/store";
-
-interface UserInfo {
-  userId: string;
-  displayName: string;
-  pictureUrl: string;
-}
+import { api } from "@/lib/eden";
+import { fetchMessages, fetchUsers, type UserInfo } from "@/lib/chat-api";
 
 // ─── Sidebar ────────────────────────────────────────────────────────────────
 
@@ -98,10 +95,8 @@ function Sidebar({
 
 function MessageBubble({
   message,
-  senderUser,
 }: {
   message: Message;
-  senderUser?: UserInfo;
 }) {
   const isUser = message.from === "user";
   const time = new Date(message.timestamp).toLocaleTimeString([], {
@@ -156,11 +151,10 @@ function MessageBubble({
 
 function ChatPanel({
   selectedUser,
-  onUsersChanged,
 }: {
   selectedUser: UserInfo | null;
-  onUsersChanged: () => void;
 }) {
+  const queryClient = useQueryClient();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
@@ -174,19 +168,26 @@ function ChatPanel({
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  // Load messages + set up SSE when selected user changes
+  const { data: messageHistory = [] } = useQuery({
+    queryKey: ["messages", selectedUser?.userId],
+    queryFn: () => fetchMessages(selectedUser!.userId),
+    enabled: Boolean(selectedUser?.userId),
+  });
+
   useEffect(() => {
     if (!selectedUser) {
       setMessages([]);
       return;
     }
-    const { userId } = selectedUser;
+    setMessages(messageHistory);
+  }, [selectedUser, messageHistory]);
 
-    // Fetch message history
-    fetch(`/api/messages?userId=${encodeURIComponent(userId)}`)
-      .then((r) => r.json())
-      .then((data: Message[]) => setMessages(Array.isArray(data) ? data : []))
-      .catch(() => {});
+  // Set up SSE when selected user changes
+  useEffect(() => {
+    if (!selectedUser) {
+      return;
+    }
+    const { userId } = selectedUser;
 
     // Connect SSE for this user's room
     let es: EventSource;
@@ -205,7 +206,7 @@ function ChatPanel({
           const msg: Message = JSON.parse(event.data);
           setMessages((prev) => [...prev, msg]);
           // Refresh user list so new users appear in sidebar
-          onUsersChanged();
+          queryClient.invalidateQueries({ queryKey: ["users"] });
         } catch {
           // ignore parse errors
         }
@@ -225,8 +226,7 @@ function ChatPanel({
       es?.close();
       clearTimeout(retryTimeout);
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedUser?.userId]);
+  }, [selectedUser?.userId, queryClient]);
 
   const sendMessage = useCallback(async () => {
     const text = input.trim();
@@ -246,21 +246,20 @@ function ChatPanel({
     setInput("");
 
     try {
-      const res = await fetch("/api/messages", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text, userId: selectedUser.userId }),
+      const { data, error: apiError } = await api.messages.post({
+        text,
+        userId: selectedUser.userId,
       });
 
-      const data = await res.json();
-
-      if (!res.ok || !data.ok) {
-        setError(data.error ?? "Failed to send message");
+      if (apiError || !data?.ok) {
+        setError(data?.error ?? "Failed to send message");
         setMessages((prev) => prev.filter((m) => m.id !== optimistic.id));
       } else {
-        setMessages((prev) =>
-          prev.map((m) => (m.id === optimistic.id ? data.message : m))
-        );
+        if (data?.message) {
+          setMessages((prev) =>
+            prev.map((m) => (m.id === optimistic.id ? data.message : m))
+          );
+        }
       }
     } catch {
       setError("Network error — could not send message");
@@ -322,7 +321,7 @@ function ChatPanel({
         )}
 
         {messages.map((msg) => (
-          <MessageBubble key={msg.id} message={msg} senderUser={selectedUser} />
+          <MessageBubble key={msg.id} message={msg} />
         ))}
 
         {error && (
@@ -374,27 +373,12 @@ function ChatPanel({
 // ─── Page root ───────────────────────────────────────────────────────────────
 
 export default function ChatPage() {
-  const [users, setUsers] = useState<UserInfo[]>([]);
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
-
-  const fetchUsers = useCallback(async () => {
-    try {
-      const res = await fetch("/api/users");
-      const data = await res.json();
-      if (Array.isArray(data)) {
-        setUsers(data as UserInfo[]);
-      }
-    } catch {
-      // ignore
-    }
-  }, []);
-
-  // Load users on mount, then refresh every 10 s for new arrivals
-  useEffect(() => {
-    fetchUsers();
-    const interval = setInterval(fetchUsers, 10_000);
-    return () => clearInterval(interval);
-  }, [fetchUsers]);
+  const { data: users = [] } = useQuery({
+    queryKey: ["users"],
+    queryFn: fetchUsers,
+    refetchInterval: 10_000,
+  });
 
   const selectedUser = users.find((u) => u.userId === selectedUserId) ?? null;
 
@@ -407,7 +391,6 @@ export default function ChatPage() {
       />
       <ChatPanel
         selectedUser={selectedUser}
-        onUsersChanged={fetchUsers}
       />
     </div>
   );
