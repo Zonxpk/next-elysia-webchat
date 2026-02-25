@@ -1,21 +1,46 @@
 import crypto from "crypto";
 
 const LINE_API_BASE = "https://api.line.me/v2/bot/message";
+const LINE_PROFILE_BASE = "https://api.line.me/v2/bot/profile";
+
+export interface LineProfile {
+  displayName: string;
+  pictureUrl: string;
+  statusMessage?: string;
+}
+
+/**
+ * Fetch a LINE user's public profile (display name + picture URL).
+ */
+export async function getUserProfile(userId: string): Promise<LineProfile> {
+  const token = process.env.LINE_CHANNEL_ACCESS_TOKEN;
+  if (!token) throw new Error("Missing LINE_CHANNEL_ACCESS_TOKEN env variable");
+
+  const res = await fetch(`${LINE_PROFILE_BASE}/${userId}`, {
+    headers: { Authorization: `Bearer ${token}` },
+    cache: "no-store",
+  });
+
+  if (!res.ok) {
+    const error = await res.text();
+    throw new Error(`LINE profile fetch failed (${res.status}): ${error}`);
+  }
+
+  return res.json() as Promise<LineProfile>;
+}
 
 /**
  * Push a text message to a LINE user.
- * Uses LINE_TARGET_USER_ID env by default, or pass an explicit userId.
  */
 export async function pushMessage(
   text: string,
-  userId?: string,
+  userId: string,
 ): Promise<void> {
-  const to = userId ?? process.env.LINE_TARGET_USER_ID;
   const token = process.env.LINE_CHANNEL_ACCESS_TOKEN;
 
-  if (!to || !token) {
+  if (!userId || !token) {
     throw new Error(
-      "Missing LINE_TARGET_USER_ID or LINE_CHANNEL_ACCESS_TOKEN env variables",
+      "Missing userId or LINE_CHANNEL_ACCESS_TOKEN env variables",
     );
   }
 
@@ -26,7 +51,7 @@ export async function pushMessage(
       Authorization: `Bearer ${token}`,
     },
     body: JSON.stringify({
-      to,
+      to: userId,
       messages: [{ type: "text", text }],
     }),
   });

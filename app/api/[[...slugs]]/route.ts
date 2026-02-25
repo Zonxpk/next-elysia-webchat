@@ -1,16 +1,49 @@
 import { Elysia, t } from "elysia";
-import { pushMessage } from "@/lib/line";
-import { addMessage, getMessages } from "@/lib/store";
-import { createSubscriber, REDIS_CHANNEL } from "@/lib/redis";
+import { pushMessage, getUserProfile } from "@/lib/line";
+import { addMessage, getMessages, getUsers } from "@/lib/store";
+import { createSubscriber, getChannelKey } from "@/lib/redis";
 
 export const app = new Elysia({ prefix: "/api" })
   /**
-   * GET /api/messages
-   * Return all stored messages (for initial load / page refresh).
+   * GET /api/users
+   * Return all known LINE users with their profiles.
    */
-  .get("/messages", async () => {
-    return getMessages();
+  .get("/users", async () => {
+    const userIds = await getUsers();
+    const profiles = await Promise.all(
+      userIds.map(async (userId) => {
+        try {
+          const profile = await getUserProfile(userId);
+          return {
+            userId,
+            displayName: profile.displayName,
+            pictureUrl: profile.pictureUrl,
+          };
+        } catch {
+          return { userId, displayName: userId.slice(0, 8) + "…", pictureUrl: "" };
+        }
+      }),
+    );
+    return profiles;
   })
+
+  /**
+   * GET /api/messages?userId=...
+   * Return all stored messages for a specific LINE user.
+   */
+  .get(
+    "/messages",
+    async ({ query }) => {
+      const { userId } = query;
+      if (!userId) return [];
+      return getMessages(userId);
+    },
+    {
+      query: t.Object({
+        userId: t.Optional(t.String()),
+      }),
+    },
+  )
 
   /**
    * POST /api/messages
@@ -19,14 +52,14 @@ export const app = new Elysia({ prefix: "/api" })
   .post(
     "/messages",
     async ({ body, set }) => {
-      const { text } = body;
+      const { text, userId } = body;
 
       // Store message locally first
-      const msg = await addMessage({ text, from: "user" });
+      const msg = await addMessage({ text, from: "user", userId });
 
-      // Push to LINE OA (non-blocking on failure so the UI still gets response)
+      // Push to the LINE user
       try {
-        await pushMessage(text);
+        await pushMessage(text, userId);
       } catch (err) {
         console.error("[LINE push error]", err);
         set.status = 502;
@@ -38,6 +71,7 @@ export const app = new Elysia({ prefix: "/api" })
     {
       body: t.Object({
         text: t.String({ minLength: 1 }),
+        userId: t.String({ minLength: 1 }),
       }),
     },
   )
@@ -47,7 +81,9 @@ export const app = new Elysia({ prefix: "/api" })
    * Server-Sent Events stream — pushes new LINE messages to connected webchat clients.
    * Uses a dedicated Redis subscriber so this works across serverless instances.
    */
-  .get("/events", async () => {
+  .get("/events", async ({ query }) => {
+    const userId = query.userId ?? "";
+    const channel = getChannelKey(userId);
     const encoder = new TextEncoder();
     const subscriber = await createSubscriber();
     let heartbeat: ReturnType<typeof setInterval> | null = null;
@@ -66,8 +102,8 @@ export const app = new Elysia({ prefix: "/api" })
           }
         }, 20_000);
 
-        // Subscribe to the Redis pub/sub channel
-        await subscriber.subscribe(REDIS_CHANNEL, (json) => {
+        // Subscribe to the per-user Redis pub/sub channel
+        await subscriber.subscribe(channel, (json) => {
           try {
             const msg = JSON.parse(json);
             // Only forward messages received FROM LINE to the webchat
@@ -83,7 +119,7 @@ export const app = new Elysia({ prefix: "/api" })
       async cancel() {
         if (heartbeat) clearInterval(heartbeat);
         try {
-          await subscriber.unsubscribe(REDIS_CHANNEL);
+          await subscriber.unsubscribe(channel);
           await subscriber.quit();
         } catch (err) {
           console.error("[SSE subscriber cleanup error]", err);
@@ -99,6 +135,10 @@ export const app = new Elysia({ prefix: "/api" })
         "X-Accel-Buffering": "no",
       },
     });
+  }, {
+    query: t.Object({
+      userId: t.Optional(t.String()),
+    }),
   });
 
 export const GET = app.fetch;

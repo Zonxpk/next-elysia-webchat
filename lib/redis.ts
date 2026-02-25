@@ -3,7 +3,6 @@ import { createClient } from "redis";
 type RedisClient = ReturnType<typeof createClient>;
 
 declare global {
-  // eslint-disable-next-line no-var
   var __redisClient: RedisClient | undefined;
 }
 
@@ -40,5 +39,15 @@ export async function createSubscriber(): Promise<RedisClient> {
   return client;
 }
 
-export const REDIS_CHANNEL = "chat:events";
-export const REDIS_KEY = "chat:messages";
+/** Per-user sorted set key for message storage. */
+export function getMessagesKey(userId: string): string {
+  return `chat:messages:${userId}`;
+}
+
+/** Per-user pub/sub channel key for SSE delivery. */
+export function getChannelKey(userId: string): string {
+  return `chat:events:${userId}`;
+}
+
+/** Global Redis set key that tracks all known LINE user IDs. */
+export const USERS_SET_KEY = "chat:users";

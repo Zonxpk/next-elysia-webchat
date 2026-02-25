@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { verifySignature } from "@/lib/line";
-import { addMessage } from "@/lib/store";
+import { verifySignature, getUserProfile } from "@/lib/line";
+import { addMessage, addUser } from "@/lib/store";
 
 interface LineTextMessage {
   type: "text";
@@ -62,13 +62,30 @@ export async function POST(request: NextRequest) {
     // Handle text messages sent by users to the LINE OA
     if (event.type === "message" && event.message?.type === "text") {
       const text = event.message.text;
-      const senderName = event.source.userId
-        ? `LINE User (${event.source.userId.slice(0, 8)}…)`
-        : "LINE User";
+      const userId = event.source.userId;
 
-      await addMessage({ text, from: "line", senderName });
+      if (!userId) {
+        console.warn("[webhook] Message event without userId — skipping");
+        continue;
+      }
 
-      console.log(`[webhook] Message from LINE: "${text}"`);
+      // Fetch real LINE display name and profile picture
+      let senderName = `LINE User (${userId.slice(0, 8)}…)`;
+      let pictureUrl: string | undefined;
+      try {
+        const profile = await getUserProfile(userId);
+        senderName = profile.displayName;
+        pictureUrl = profile.pictureUrl;
+      } catch (err) {
+        console.warn("[webhook] Could not fetch LINE profile:", err);
+      }
+
+      // Register the user in the global users set
+      await addUser(userId);
+
+      await addMessage({ text, from: "line", userId, senderName, pictureUrl });
+
+      console.log(`[webhook] Message from LINE user ${userId}: "${text}"`);
     }
 
     // Log other event types for debugging
