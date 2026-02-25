@@ -75,7 +75,7 @@ function Sidebar({
             <button
               key={user.userId}
               onClick={() => onSelect(user.userId)}
-              className={`w-full flex items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-gray-50 border-b border-gray-100 ${
+              className={`w-full flex items-center gap-3 px-4 py-3 text-left cursor-pointer transition-colors hover:bg-gray-50 border-b border-gray-100 ${
                 selectedUserId === user.userId ? "bg-green-50 border-l-4 border-l-[#00B900]" : ""
               }`}
             >
@@ -351,7 +351,7 @@ function ChatPanel({
         <button
           onClick={sendMessage}
           disabled={!input.trim() || sending}
-          className="flex-shrink-0 w-10 h-10 rounded-full bg-[#00B900] hover:bg-[#009900] disabled:bg-gray-300 disabled:cursor-not-allowed text-white flex items-center justify-center transition-colors shadow-sm"
+          className="flex-shrink-0 w-10 h-10 rounded-full bg-[#00B900] hover:bg-[#009900] cursor-pointer disabled:bg-gray-300 disabled:cursor-not-allowed text-white flex items-center justify-center transition-colors shadow-sm"
           aria-label="Send message"
         >
           {sending ? (
