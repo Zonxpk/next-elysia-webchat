@@ -32,10 +32,7 @@ export async function getUserProfile(userId: string): Promise<LineProfile> {
 /**
  * Push a text message to a LINE user.
  */
-export async function pushMessage(
-  text: string,
-  userId: string,
-): Promise<void> {
+export async function pushMessage(text: string, userId: string): Promise<void> {
   const token = process.env.LINE_CHANNEL_ACCESS_TOKEN;
 
   if (!userId || !token) {
