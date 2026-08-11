@@ -4,6 +4,7 @@ type RedisClient = ReturnType<typeof createClient>;
 
 declare global {
   var __redisClient: RedisClient | undefined;
+  var __redisClientPromise: Promise<RedisClient> | undefined;
 }
 
 function getRedisUrl(): string {
@@ -17,14 +18,21 @@ function getRedisUrl(): string {
  * Reuses the same connection across Next.js hot-reloads in dev.
  */
 export async function getRedisClient(): Promise<RedisClient> {
-  if (!global.__redisClient) {
-    global.__redisClient = createClient({ url: getRedisUrl() });
-    global.__redisClient.on("error", (err) =>
-      console.error("[Redis client error]", err),
-    );
-    await global.__redisClient.connect();
+  if (global.__redisClient) return global.__redisClient;
+  if (!global.__redisClientPromise) {
+    const client = createClient({ url: getRedisUrl() });
+    client.on("error", (err) => console.error("[Redis client error]", err));
+    global.__redisClientPromise = client.connect().then(() => {
+      global.__redisClient = client;
+      return client;
+    }).catch((error) => {
+      // Allow a later request to retry after a transient connection failure.
+      global.__redisClientPromise = undefined;
+      client.disconnect().catch(() => undefined);
+      throw error;
+    });
   }
-  return global.__redisClient;
+  return global.__redisClientPromise;
 }
 
 /**
@@ -48,6 +56,9 @@ export function getMessagesKey(userId: string): string {
 export function getChannelKey(userId: string): string {
   return `chat:events:${userId}`;
 }
+
+/** Global Redis pub/sub channel for incoming LINE messages. */
+export const GLOBAL_CHANNEL_KEY = "chat:events:all";
 
 /** Global Redis set key that tracks all known LINE user IDs. */
 export const USERS_SET_KEY = "chat:users";

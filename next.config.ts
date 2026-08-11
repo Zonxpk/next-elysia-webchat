@@ -1,6 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  reactCompiler: true,
   // Enable response body streaming for SSE (Server-Sent Events)
   experimental: {},
   // Vercel recommends these headers for SSE endpoints

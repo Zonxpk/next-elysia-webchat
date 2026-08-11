@@ -25,6 +25,33 @@ interface LineWebhookBody {
   events: LineWebhookEvent[];
 }
 
+function isWebhookBody(value: unknown): value is LineWebhookBody {
+  if (!value || typeof value !== "object") return false;
+  const body = value as Record<string, unknown>;
+  if (typeof body.destination !== "string" || !Array.isArray(body.events)) {
+    return false;
+  }
+
+  return body.events.every((event) => {
+    if (!event || typeof event !== "object") return false;
+    const candidate = event as Record<string, unknown>;
+    if (typeof candidate.type !== "string" || typeof candidate.timestamp !== "number") {
+      return false;
+    }
+    const source = candidate.source;
+    if (!source || typeof source !== "object") return false;
+    const sourceType = (source as Record<string, unknown>).type;
+    if (!["user", "group", "room"].includes(String(sourceType))) return false;
+
+    const message = candidate.message;
+    if (message === undefined) return true;
+    if (!message || typeof message !== "object") return false;
+    const messageRecord = message as Record<string, unknown>;
+    return messageRecord.type !== "text" ||
+      (typeof messageRecord.id === "string" && typeof messageRecord.text === "string");
+  });
+}
+
 /**
  * POST /api/webhook
  * Receives events from the LINE Platform.
@@ -37,26 +64,36 @@ export async function POST(request: NextRequest) {
   const rawBody = await request.text();
   const signature = request.headers.get("x-line-signature") ?? "";
 
-  // Verify webhook signature (skip in dev if secret not set)
-  if (process.env.LINE_CHANNEL_SECRET) {
-    try {
-      const valid = verifySignature(rawBody, signature);
-      if (!valid) {
-        console.warn("[webhook] Invalid LINE signature");
-        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-      }
-    } catch (err) {
-      console.error("[webhook] Signature verification error:", err);
-      return NextResponse.json({ error: "Internal error" }, { status: 500 });
-    }
+  const secret = process.env.LINE_CHANNEL_SECRET;
+  if (!secret) {
+    console.error("[webhook] LINE_CHANNEL_SECRET is not configured");
+    return NextResponse.json({ error: "Webhook is not configured" }, { status: 503 });
   }
 
-  let body: LineWebhookBody;
+  if (!signature) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
   try {
-    body = JSON.parse(rawBody);
+    const valid = verifySignature(rawBody, signature);
+    if (!valid) {
+      console.warn("[webhook] Invalid LINE signature");
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+  } catch (err) {
+    console.error("[webhook] Signature verification error:", err);
+    return NextResponse.json({ error: "Internal error" }, { status: 500 });
+  }
+
+  let parsedBody: unknown;
+  try {
+    parsedBody = JSON.parse(rawBody);
   } catch {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
+  if (!isWebhookBody(parsedBody)) {
+    return NextResponse.json({ error: "Invalid webhook payload" }, { status: 400 });
+  }
+  const body = parsedBody;
 
   for (const event of body.events ?? []) {
     // Handle text messages sent by users to the LINE OA
@@ -83,7 +120,14 @@ export async function POST(request: NextRequest) {
       // Register the user in the global users set
       await addUser(userId);
 
-      await addMessage({ text, from: "line", userId, senderName, pictureUrl });
+      await addMessage({
+        text,
+        from: "line",
+        userId,
+        senderName,
+        pictureUrl,
+        sourceId: event.message.id,
+      });
 
       console.log(`[webhook] Message from LINE user ${userId}: "${text}"`);
     }
