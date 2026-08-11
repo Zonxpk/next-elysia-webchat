@@ -1,7 +1,12 @@
 import { Elysia, t } from "elysia";
 import { pushMessage, getUserProfile } from "@/lib/line";
-import { addMessage, getMessages, getUsers } from "@/lib/store";
-import { createSubscriber, getChannelKey } from "@/lib/redis";
+import { addMessage, getConversationSummary, getMessages, getUsers, markUserRead } from "@/lib/store";
+import { formatMessagePreview } from "@/lib/chat-utils";
+import {
+  createSubscriber,
+  getChannelKey,
+  GLOBAL_CHANNEL_KEY,
+} from "@/lib/redis";
 
 export const app = new Elysia({ prefix: "/api" })
   /**
@@ -12,20 +17,23 @@ export const app = new Elysia({ prefix: "/api" })
     const userIds = await getUsers();
     const profiles = await Promise.all(
       userIds.map(async (userId) => {
-        try {
-          const profile = await getUserProfile(userId);
-          return {
-            userId,
-            displayName: profile.displayName,
-            pictureUrl: profile.pictureUrl,
-          };
-        } catch {
-          return {
-            userId,
-            displayName: userId.slice(0, 8) + "…",
-            pictureUrl: "",
-          };
-        }
+        const [{ unreadCount, latestMessage }, profile] = await Promise.all([
+          getConversationSummary(userId),
+          getUserProfile(userId).catch(() => null),
+        ]);
+        const lastMessage = latestMessage
+          ? formatMessagePreview(latestMessage.text)
+          : "";
+        const lastMessageAt = latestMessage?.timestamp ?? 0;
+
+        return {
+          userId,
+          displayName: profile?.displayName ?? userId.slice(0, 8) + "…",
+          pictureUrl: profile?.pictureUrl ?? "",
+          unreadCount,
+          lastMessage,
+          lastMessageAt,
+        };
       }),
     );
     return profiles;
@@ -50,6 +58,23 @@ export const app = new Elysia({ prefix: "/api" })
   )
 
   /**
+   * POST /api/read
+   * Mark a conversation as read.
+   */
+  .post(
+    "/read",
+    async ({ body }) => {
+      await markUserRead(body.userId);
+      return { ok: true };
+    },
+    {
+      body: t.Object({
+        userId: t.String({ minLength: 1 }),
+      }),
+    },
+  )
+
+  /**
    * POST /api/messages
    * Send a text message from the webchat to LINE OA, and store it.
    */
@@ -57,9 +82,6 @@ export const app = new Elysia({ prefix: "/api" })
     "/messages",
     async ({ body, set }) => {
       const { text, userId } = body;
-
-      // Store message locally first
-      const msg = await addMessage({ text, from: "user", userId });
 
       // Push to the LINE user
       try {
@@ -69,6 +91,10 @@ export const app = new Elysia({ prefix: "/api" })
         set.status = 502;
         return { ok: false, error: "Failed to send to LINE" };
       }
+
+      // Persist only after LINE confirms delivery, so failed sends cannot
+      // reappear as successful messages on the next history fetch.
+      const msg = await addMessage({ text, from: "user", userId });
 
       return { ok: true, message: msg };
     },
@@ -89,7 +115,7 @@ export const app = new Elysia({ prefix: "/api" })
     "/events",
     async ({ query }) => {
       const userId = query.userId ?? "";
-      const channel = getChannelKey(userId);
+      const channel = userId ? getChannelKey(userId) : GLOBAL_CHANNEL_KEY;
       const encoder = new TextEncoder();
       const subscriber = await createSubscriber();
       let heartbeat: ReturnType<typeof setInterval> | null = null;
